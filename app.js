@@ -6,6 +6,13 @@ document.addEventListener("DOMContentLoaded", () => {
   const totalSteps = 5;
   let activeTimelineChecklist = Array(7).fill(false);
   let cachedResponseData = null;
+  
+  // Animation & Interval States (declared at top to prevent Temporal Dead Zone)
+  let rippleAnimId = null;
+  let loaderInterval = null;
+  let currentY = 115;
+  let loaderPhase = "filling";
+  let loadingPhrasesInterval = null;
 
   // --- DOM ELEMENTS ---
   const resetAppBtn = document.getElementById("resetAppBtn");
@@ -164,7 +171,6 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // --- HERO AMBIENT RIPPLES ---
-  let rippleAnimId = null;
   function initAmbientRipples() {
     const canvas = document.getElementById("ambientRippleCanvas");
     if (!canvas) return;
@@ -301,10 +307,6 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // --- LOADER DYNAMICS ( Rising Beaker, Shimmer & Bubbles ) ---
-  let loaderInterval = null;
-  let currentY = 115;
-  let loaderPhase = "filling";
-  let loadingPhrasesInterval = null;
 
   const loadingPhrases = [
     "Mapping your household water profile...",
