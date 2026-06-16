@@ -608,23 +608,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // --- GEMINI API INTEGRATION ---
   async function submitWizardData() {
-    let endpoint;
-    const localApiKey = localStorage.getItem("gemini_api_key") || EMBEDDED_API_KEY;
-
-    if (localApiKey) {
-      endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${localApiKey}`;
-    } else if (window.location.protocol === "file:" || window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
-      const userKey = prompt("Local Development: Please paste your Gemini API Key to run calculations (it will be saved only in your browser's local storage):");
-      if (userKey && userKey.trim()) {
-        localStorage.setItem("gemini_api_key", userKey.trim());
-        endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${userKey.trim()}`;
-      } else {
-        showToast("API Key is required to run local calculations.", "error");
-        return;
-      }
-    } else {
-      endpoint = "/api/gemini";
-    }
+    const endpoint = "/api/gemini";
 
     const location = document.getElementById("location").value.trim();
     const householdCount = parseInt(householdCountInput.value);
