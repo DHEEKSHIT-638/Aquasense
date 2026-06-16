@@ -17,6 +17,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const steps = document.querySelectorAll(".wizard-step");
   const progress = document.getElementById("wizardProgressBar");
   const stepIndicator = document.getElementById("wizardStepIndicator");
+  const stepDots = document.querySelectorAll(".step-dot");
 
   // Form Value Sync
   const householdCountInput = document.getElementById("household_count");
@@ -36,6 +37,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const resultsSection = document.getElementById("resultsSection");
   const recalculateBtn = document.getElementById("recalculateBtn");
   const factCarousel = document.getElementById("factCarousel");
+  const completionBanner = document.getElementById("completionBanner");
 
   // Dashboard Data Targets
   const scoreVal = document.getElementById("scoreVal");
@@ -59,7 +61,17 @@ document.addEventListener("DOMContentLoaded", () => {
   let factIndex = 0;
   let factInterval = null;
 
+  // Custom step titles for step-rail
+  const stepTitles = [
+    "Demographics",
+    "Personal Habits",
+    "Appliance Usage",
+    "Outdoor Use",
+    "Billing & Storage"
+  ];
+
   // --- INITIALIZATION ---
+  initAmbientRipples();
   initChoiceCards();
   initFormSync();
   checkProgressChecklist();
@@ -81,23 +93,34 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // --- FORM VALUE SYNCS & CHOICE CARDS ---
   function initFormSync() {
-    // Sync slider values to UI labels
-    householdCountInput.addEventListener("input", (e) => {
-      householdValDisplay.textContent = `${e.target.value} ${e.target.value == 1 ? 'Person' : 'People'}`;
-    });
-    showerDurationInput.addEventListener("input", (e) => {
-      showerValDisplay.textContent = `${e.target.value} ${e.target.value == 1 ? 'Minute' : 'Minutes'}`;
-    });
-    washingMachineInput.addEventListener("input", (e) => {
-      washingValDisplay.textContent = `${e.target.value} ${e.target.value == 1 ? 'Load' : 'Loads'} / week`;
-    });
-    carWashingInput.addEventListener("input", (e) => {
-      carValDisplay.textContent = `${e.target.value} ${e.target.value == 1 ? 'Time' : 'Times'} / week`;
+    const sliders = [
+      { input: householdCountInput, display: householdValDisplay, suffix: (val) => val == 1 ? 'Person' : 'People' },
+      { input: showerDurationInput, display: showerValDisplay, suffix: (val) => val == 1 ? 'Minute' : 'Minutes' },
+      { input: washingMachineInput, display: washingValDisplay, suffix: (val) => val == 1 ? 'Load / week' : 'Loads / week' },
+      { input: carWashingInput, display: carValDisplay, suffix: (val) => val == 1 ? 'Time / week' : 'Times / week' }
+    ];
+
+    sliders.forEach(({ input, display, suffix }) => {
+      // Set initial fill
+      updateSliderFill(input, display, suffix);
+      
+      input.addEventListener("input", () => {
+        updateSliderFill(input, display, suffix);
+        // Pulse badge on change
+        display.classList.add("changed");
+        setTimeout(() => display.classList.remove("changed"), 150);
+      });
     });
   }
 
+  function updateSliderFill(input, display, suffix) {
+    const val = input.value;
+    display.textContent = `${val} ${typeof suffix === 'function' ? suffix(val) : suffix}`;
+    const pct = ((val - input.min) / (input.max - input.min)) * 100;
+    input.style.setProperty('--slider-fill', `${pct}%`);
+  }
+
   function initChoiceCards() {
-    // Handle card selections
     const choiceCards = document.querySelectorAll(".choice-card");
     choiceCards.forEach(card => {
       card.addEventListener("click", () => {
@@ -125,6 +148,78 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  // --- TRANSITION HELPER ---
+  function switchPanel(fromEl, toEl) {
+    fromEl.classList.add("exiting");
+    setTimeout(() => {
+      fromEl.style.display = "none";
+      fromEl.classList.remove("exiting");
+
+      toEl.style.display = "block";
+      toEl.classList.add("entering");
+      // Force reflow
+      toEl.offsetHeight;
+      toEl.classList.remove("entering");
+    }, 400);
+  }
+
+  // --- HERO AMBIENT RIPPLES ---
+  let rippleAnimId = null;
+  function initAmbientRipples() {
+    const canvas = document.getElementById("ambientRippleCanvas");
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    const ripples = [];
+    const maxRipples = 3;
+
+    // Spawn ripples at interval
+    function spawnRipple() {
+      if (ripples.length < maxRipples) {
+        ripples.push({
+          x: canvas.width / 2,
+          y: canvas.height / 2,
+          r: 20,
+          alpha: 0.35,
+          speed: 1.1
+        });
+      }
+    }
+
+    // Spawn first ripple
+    spawnRipple();
+    const spawnInterval = setInterval(spawnRipple, 1500);
+
+    function animate() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      for (let i = ripples.length - 1; i >= 0; i--) {
+        const rip = ripples[i];
+        ctx.beginPath();
+        ctx.arc(rip.x, rip.y, rip.r, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(91, 163, 192, ${rip.alpha})`;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        rip.r += rip.speed;
+        // alpha fades as it expands
+        rip.alpha = 0.35 * (1 - (rip.r - 20) / 160);
+
+        if (rip.r >= 180 || rip.alpha <= 0) {
+          ripples.splice(i, 1);
+        }
+      }
+
+      rippleAnimId = requestAnimationFrame(animate);
+    }
+    animate();
+
+    // Cleanup interval if component unmounts
+    window.addEventListener("unload", () => {
+      clearInterval(spawnInterval);
+      cancelAnimationFrame(rippleAnimId);
+    });
+  }
+
   // --- WIZARD STEP NAVIGATION ---
   function updateWizardUI() {
     steps.forEach((step, idx) => {
@@ -132,6 +227,17 @@ document.addEventListener("DOMContentLoaded", () => {
         step.classList.add("active");
       } else {
         step.classList.remove("active");
+      }
+    });
+
+    // Update Step dots
+    stepDots.forEach((dot, idx) => {
+      const stepNum = idx + 1;
+      dot.className = "step-dot";
+      if (stepNum === currentStep) {
+        dot.classList.add("active");
+      } else if (stepNum < currentStep) {
+        dot.classList.add("completed");
       }
     });
 
@@ -145,14 +251,14 @@ document.addEventListener("DOMContentLoaded", () => {
     // Next Button label update
     if (currentStep === totalSteps) {
       nextBtn.innerHTML = `
-        Calculate AI Analysis
+        <span>Calculate My Footprint</span>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
         </svg>
       `;
     } else {
       nextBtn.innerHTML = `
-        Next
+        <span>Continue</span>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <line x1="5" y1="12" x2="19" y2="12"></line>
           <polyline points="12 5 19 12 12 19"></polyline>
@@ -161,10 +267,10 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // Progress Bar percent
-    const percent = ((currentStep - 1) / (totalSteps - 1)) * 90 + 10;
+    const percent = ((currentStep - 1) / (totalSteps - 1)) * 80 + 20;
     progress.style.width = `${percent}%`;
     progress.setAttribute("aria-valuenow", percent);
-    stepIndicator.textContent = `Step ${currentStep} of ${totalSteps}`;
+    stepIndicator.textContent = `Step ${currentStep} of ${totalSteps} — ${stepTitles[currentStep - 1]}`;
   }
 
   prevBtn.addEventListener("click", () => {
@@ -181,7 +287,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const locationInput = document.getElementById("location");
         if (!locationInput.value.trim()) {
           locationInput.focus();
-          locationInput.style.borderColor = "var(--color-destructive)";
+          locationInput.style.borderColor = "var(--color-risk-high)";
           setTimeout(() => locationInput.style.borderColor = "var(--color-border)", 2000);
           return;
         }
@@ -194,60 +300,124 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // --- LOADER DYNAMICS ---
+  // --- LOADER DYNAMICS ( Rising Beaker, Shimmer & Bubbles ) ---
   let loaderInterval = null;
   let currentY = 115;
   let loaderPhase = "filling";
+  let loadingPhrasesInterval = null;
+
+  const loadingPhrases = [
+    "Mapping your household water profile...",
+    "Cross-referencing BIS IS 1172 standards...",
+    "Calculating daily consumption patterns...",
+    "Scoring against UN SDG 6.4 benchmarks...",
+    "Generating your conservation roadmap...",
+    "Almost there — building your action plan..."
+  ];
 
   function startLoader() {
     form.style.display = "none";
     loaderPanel.style.display = "flex";
     
-    // Reset loader state variables
     const liquidRect = document.getElementById("liquidRect");
-    let phase = 0;
+    const shimmerLine = document.getElementById("shimmerLine");
+    const flaskSvg = document.querySelector(".flask-svg");
+    
+    // Create beaker bubbles container
+    let bubbleGroup = document.getElementById("beakerBubbles");
+    if (!bubbleGroup) {
+      bubbleGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      bubbleGroup.setAttribute("id", "beakerBubbles");
+      // Insert inside clipPath group
+      const clipGroup = flaskSvg.querySelector("g[clip-path]");
+      clipGroup.appendChild(bubbleGroup);
+    }
+    bubbleGroup.innerHTML = "";
 
-    function setLiquidHeight(y, currentPhase) {
-      // scale down amplitude at the extreme bottom (y > 95) or top (y < 20) to fit within SVG bounds
-      const amplitude = (y > 95 || y < 20) ? 1.0 : 3.0;
-      let pathD = `M 0,${y + Math.sin(currentPhase) * amplitude}`;
+    // Maintain bubble states
+    const bubbles = [];
+    const maxBubbles = 6;
+    for (let i = 0; i < maxBubbles; i++) {
+      bubbles.push({
+        cx: 25 + Math.random() * 50,
+        cy: 110 + Math.random() * 10,
+        r: 2 + Math.random() * 3,
+        speed: 0.8 + Math.random() * 1.2
+      });
+      const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      circle.setAttribute("class", "beaker-bubble");
+      bubbleGroup.appendChild(circle);
+    }
+
+    let phase = 0;
+    currentY = 115;
+    loaderPhase = "filling";
+    
+    // Smooth filling and wave oscillation
+    loaderInterval = setInterval(() => {
+      phase += 0.12;
+
+      if (loaderPhase === "filling" || loaderPhase === "waiting") {
+        let speed = 0.5;
+        if (currentY < 45) {
+          speed = (currentY - 20) * 0.025;
+          if (speed < 0.08) speed = 0.08;
+        }
+        currentY -= speed;
+      } else if (loaderPhase === "completing") {
+        if (currentY > 15) {
+          currentY -= 4.0;
+          if (currentY < 15) currentY = 15;
+        }
+      }
+
+      // Render Liquid Wave
+      const amplitude = (currentY > 95 || currentY < 20) ? 1.0 : 2.5;
+      let pathD = `M 0,${currentY + Math.sin(phase) * amplitude}`;
       for (let x = 2; x <= 100; x += 2) {
-        const waveY = y + Math.sin(x * 0.15 + currentPhase) * amplitude;
+        const waveY = currentY + Math.sin(x * 0.15 + phase) * amplitude;
         pathD += ` L ${x},${waveY}`;
       }
       pathD += ` L 100,120 L 0,120 Z`;
       liquidRect.setAttribute("d", pathD);
-    }
 
-    setLiquidHeight(115, phase);
-    currentY = 115;
-    loaderPhase = "filling";
-    
-    // Smooth filling and continuous wave oscillation
-    loaderInterval = setInterval(() => {
-      phase += 0.15; // wave horizontal motion increment
+      // Render Shimmer Line
+      shimmerLine.setAttribute("y1", currentY + Math.sin(phase) * amplitude);
+      shimmerLine.setAttribute("y2", currentY + Math.sin(100 * 0.15 + phase) * amplitude);
 
-      if (loaderPhase === "filling" || loaderPhase === "waiting") {
-        // Gradual, continuous filling over the whole duration:
-        // It starts at a steady 0.7 units/tick and slows down naturally as it approaches the neck
-        let speed = 0.7;
-        if (currentY < 45) {
-          speed = (currentY - 20) * 0.028;
-          if (speed < 0.1) speed = 0.1;
+      // Render Beaker Bubbles
+      const circles = bubbleGroup.querySelectorAll("circle");
+      bubbles.forEach((b, idx) => {
+        b.cy -= b.speed;
+        // Reset bubble to bottom if it rises above liquid level
+        if (b.cy < currentY + 5) {
+          b.cy = 110 + Math.random() * 10;
+          b.cx = 25 + Math.random() * 50;
         }
-        currentY -= speed;
-        setLiquidHeight(currentY, phase);
-      } else if (loaderPhase === "completing") {
-        // Rapid surge to 15 (100% full)
-        if (currentY > 15) {
-          currentY -= 4.5;
-          if (currentY < 15) currentY = 15;
-          setLiquidHeight(currentY, phase);
-        }
+        const circle = circles[idx];
+        circle.setAttribute("cx", b.cx);
+        circle.setAttribute("cy", b.cy);
+        circle.setAttribute("r", b.r);
+      });
+
+    }, 40);
+
+    // Rotating status text phrases every 2 seconds
+    let phraseIdx = 0;
+    updateLoaderStatus(loadingPhrases[0]);
+    loadingPhrasesInterval = setInterval(() => {
+      phraseIdx = (phraseIdx + 1) % loadingPhrases.length;
+      const statusEl = document.getElementById("loaderStatus");
+      if (statusEl) {
+        statusEl.style.opacity = 0;
+        setTimeout(() => {
+          statusEl.textContent = loadingPhrases[phraseIdx];
+          statusEl.style.opacity = 1;
+        }, 300);
       }
-    }, 40); // 25 FPS for smooth animation rendering
+    }, 2000);
 
-    // Carousel for facts rotation
+    // Carousel for educational facts rotation
     factCarousel.textContent = waterFacts[0];
     factIndex = 1;
     factInterval = setInterval(() => {
@@ -263,6 +433,7 @@ document.addEventListener("DOMContentLoaded", () => {
   function stopLoader() {
     clearInterval(loaderInterval);
     clearInterval(factInterval);
+    clearInterval(loadingPhrasesInterval);
     loaderPanel.style.display = "none";
     form.style.display = "block";
   }
@@ -273,7 +444,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const checkInterval = setInterval(() => {
         if (currentY <= 15) {
           clearInterval(checkInterval);
-          setTimeout(resolve, 200); // 200ms delay for completion visual satisfaction
+          setTimeout(resolve, 200);
         }
       }, 30);
     });
@@ -344,7 +515,6 @@ document.addEventListener("DOMContentLoaded", () => {
       dismissToast(toast);
     });
 
-    // Auto-dismiss success/warning notifications after 5 seconds, but error notifications persist indefinitely
     if (type !== "error") {
       setTimeout(() => {
         dismissToast(toast);
@@ -359,9 +529,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // Helper for fetch with retries and exponential backoff
   async function fetchWithRetry(url, options, maxRetries = 4) {
-    // Mask API key in console logs for safety
     const logUrl = url.replace(/key=[^&]+/, "key=AIzaSy***");
     console.log(`Sending API request to: ${logUrl}`);
 
@@ -372,21 +540,18 @@ document.addEventListener("DOMContentLoaded", () => {
           return response;
         }
 
-        // Try to parse the detailed Google API error message from response body
         let errorMsg = `HTTP error ${response.status}`;
         try {
           const errData = await response.json();
           if (errData && errData.error && errData.error.message) {
             errorMsg = `${errData.error.message} (HTTP ${response.status})`;
           }
-        } catch (_) {
-          // Fallback if response body is not JSON or cannot be read
-        }
+        } catch (_) {}
         
         if (response.status === 429 || response.status === 503 || response.status === 504) {
           if (i === maxRetries - 1) throw new Error(errorMsg);
           const waitTime = i === 0 ? 5 : (i === 1 ? 10 : 20);
-          const retryNum = i + 1; // 1, 2, or 3
+          const retryNum = i + 1;
           console.warn(`Transient API error (${response.status}): ${errorMsg}. Retrying in ${waitTime}s...`);
           for (let s = waitTime; s > 0; s--) {
             updateLoaderStatus(`Rate limit reached. Retrying in ${s}s... (${retryNum}/3)`);
@@ -399,7 +564,7 @@ document.addEventListener("DOMContentLoaded", () => {
       } catch (err) {
         if (i === maxRetries - 1) throw err;
         const waitTime = i === 0 ? 5 : (i === 1 ? 10 : 20);
-        const retryNum = i + 1; // 1, 2, or 3
+        const retryNum = i + 1;
         console.warn(`API connection glitch: ${err.message}. Retrying in ${waitTime}s...`);
         for (let s = waitTime; s > 0; s--) {
           updateLoaderStatus(`Rate limit reached. Retrying in ${s}s... (${retryNum}/3)`);
@@ -407,43 +572,20 @@ document.addEventListener("DOMContentLoaded", () => {
         }
       }
     }
-    throw new Error("Max API connection retries exceeded. The server is temporarily busy; please wait a moment and click calculate again to retry.");
+    throw new Error("Max API retries exceeded.");
   }
 
-  // --- BUTTON COOLDOWN LOGIC ---
   function startButtonCooldown() {
     let timeLeft = 30;
-    
-    // Store original HTML contents
-    const nextBtnOriginalHTML = `
-      Calculate AI Analysis
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
-      </svg>
-    `;
-    const recalculateBtnOriginalHTML = `
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></svg>
-      Recalculate Footprint
-    `;
+    const nextBtnOriginalHTML = nextBtn.innerHTML;
+    const recalculateBtnOriginalHTML = recalculateBtn.innerHTML;
 
-    // Disable buttons
     nextBtn.disabled = true;
     recalculateBtn.disabled = true;
 
     const updateBtnText = (seconds) => {
-      nextBtn.innerHTML = `
-        Please wait (${seconds}s)
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline>
-        </svg>
-      `;
-      recalculateBtn.innerHTML = `
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline>
-        </svg>
-        Please wait (${seconds}s)
-      `;
+      nextBtn.innerHTML = `Please wait (${seconds}s) <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>`;
+      recalculateBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg> Please wait (${seconds}s)`;
     };
 
     updateBtnText(timeLeft);
@@ -452,11 +594,8 @@ document.addEventListener("DOMContentLoaded", () => {
       timeLeft--;
       if (timeLeft <= 0) {
         clearInterval(cooldownInterval);
-        
-        // Restore original states
         nextBtn.disabled = false;
         recalculateBtn.disabled = false;
-        
         nextBtn.innerHTML = nextBtnOriginalHTML;
         recalculateBtn.innerHTML = recalculateBtnOriginalHTML;
       } else {
@@ -465,7 +604,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }, 1000);
   }
 
-  // --- GEMINI API INTEGRATION & PROMPT ENGINEERING ---
+  // --- GEMINI API INTEGRATION ---
   async function submitWizardData() {
     let endpoint;
     const localApiKey = localStorage.getItem("gemini_api_key") || EMBEDDED_API_KEY;
@@ -473,7 +612,6 @@ document.addEventListener("DOMContentLoaded", () => {
     if (localApiKey) {
       endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${localApiKey}`;
     } else if (window.location.protocol === "file:" || window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
-      // Local development fallback
       const userKey = prompt("Local Development: Please paste your Gemini API Key to run calculations (it will be saved only in your browser's local storage):");
       if (userKey && userKey.trim()) {
         localStorage.setItem("gemini_api_key", userKey.trim());
@@ -483,11 +621,9 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
     } else {
-      // Production deployed on Vercel
       endpoint = "/api/gemini";
     }
 
-    // Collect data
     const location = document.getElementById("location").value.trim();
     const householdCount = parseInt(householdCountInput.value);
     const showerDuration = parseInt(showerDurationInput.value);
@@ -517,7 +653,6 @@ document.addEventListener("DOMContentLoaded", () => {
     updateLoaderStatus("Consulting IS 1172 standards & regional policies...");
     startLoader();
 
-    // System Prompt Context (RAG Simulation Layer)
     const systemPrompt = `You are AquaSense, an expert AI water conservation advisor trained on:
 - World Health Organization (WHO) basic domestic water access guidelines (minimum 50-100 liters per capita daily).
 - United Nations Sustainable Development Goal (SDG) 6 targets (specifically Target 6.4 regarding water use efficiency).
@@ -603,13 +738,11 @@ ${JSON.stringify(userData, null, 2)}`;
       const rawText = resultData.candidates[0].content.parts[0].text;
       const parsedJson = JSON.parse(rawText);
 
-      // Save output state & reset progress checklist
       cachedResponseData = parsedJson;
       activeTimelineChecklist = Array(7).fill(false);
       localStorage.setItem("aquasense_last_result", JSON.stringify(parsedJson));
       localStorage.setItem("aquasense_checklist", JSON.stringify(activeTimelineChecklist));
 
-      // Trigger success surge animation in the beaker before rendering the results
       await completeLoaderAnimation();
 
       stopLoader();
@@ -620,24 +753,6 @@ ${JSON.stringify(userData, null, 2)}`;
     } catch (error) {
       console.error("API Call Error:", error);
       stopLoader();
-
-      // Attempt to auto-diagnose in console by listing active model names if local key exists
-      if (localApiKey) {
-        const listEndpoint = `https://generativelanguage.googleapis.com/v1beta/models?key=${localApiKey}`;
-        fetch(listEndpoint)
-          .then(res => res.json())
-          .then(data => {
-            if (data && data.models && data.models.length > 0) {
-              const modelNames = data.models
-                .filter(m => m.supportedGenerationMethods && m.supportedGenerationMethods.includes("generateContent"))
-                .map(m => m.name.replace("models/", ""));
-              console.log("Your API key supports these models for generateContent (v1beta):", modelNames);
-            }
-          })
-          .catch(err => {
-            console.error("Diagnostic ListModels failed:", err);
-          });
-      }
       
       let friendlyMessage = error.message;
       if (friendlyMessage.includes("Max API connection retries") || friendlyMessage.includes("429") || friendlyMessage.includes("503")) {
@@ -649,21 +764,26 @@ ${JSON.stringify(userData, null, 2)}`;
 
   // --- DASHBOARD RENDERER ---
   function renderDashboard(data) {
-    // Switch Views
+    // Switch Panels with Transition
+    switchPanel(calculatorSection, resultsSection);
     heroSection.style.display = "none";
-    calculatorSection.style.display = "none";
-    resultsSection.style.display = "block";
-    resultsSection.scrollIntoView({ behavior: "smooth" });
 
-    // 1. Score Gauge Animation
-    scoreVal.textContent = data.risk_score;
-    
-    // Set circle offset (Circumference 440)
-    const offset = 440 * (1 - data.risk_score / 100);
-    gaugeFill.style.strokeDashoffset = offset;
+    // 1. Semicircular Gauge Animation
+    scoreVal.textContent = "0";
+    countUp(scoreVal, data.risk_score, 1200);
 
-    // Adjust color based on risk levels
-    riskBadge.className = "badge-risk"; // reset
+    // Set semicircle offset (Circumference 283)
+    const offset = 283 * (1 - data.risk_score / 100);
+    gaugeFill.style.strokeDasharray = "283";
+    gaugeFill.style.strokeDashoffset = "283"; // Start empty
+
+    setTimeout(() => {
+      gaugeFill.style.transition = 'stroke-dashoffset 1.4s cubic-bezier(0.25, 1, 0.5, 1)';
+      gaugeFill.style.strokeDashoffset = offset;
+    }, 300);
+
+    // Set Risk Badge Color Class
+    riskBadge.className = "badge-risk";
     if (data.risk_level === "LOW") {
       riskBadge.classList.add("low");
       riskBadge.textContent = "LOW RISK";
@@ -678,49 +798,42 @@ ${JSON.stringify(userData, null, 2)}`;
       gaugeFill.style.stroke = "var(--color-risk-high)";
     }
 
-    // Score Explanation
     scoreExplanation.textContent = data.score_explanation;
 
-    // 2. Savings Metrics
-    litersSavedVal.textContent = `${data.estimated_daily_savings_liters} L`;
-    inrSavedVal.textContent = `₹${data.estimated_monthly_bill_savings_inr}`;
+    // 2. Count-Up Savings Metrics (Triggered with 600ms delays)
+    setTimeout(() => {
+      countUp(litersSavedVal, data.estimated_daily_savings_liters, 1200, '');
+      countUp(inrSavedVal, data.estimated_monthly_bill_savings_inr, 1400, '');
+    }, 600);
 
-    // 3. Top 5 Tips Rendering
+    // 3. Staggered Bento Cards Fade-In
+    revealBentoCards();
+
+    // 4. Personalized Recommendations Tips
     tipsListContainer.innerHTML = "";
-    data.tips.forEach(tip => {
+    data.tips.forEach((tip, idx) => {
       const tipRow = document.createElement("div");
       tipRow.className = "tip-item";
 
-      // Select matching SVG path based on keywords
       const svgPath = getSvgIconForTip(tip.title, tip.description);
 
-      // Clean up liters_saved string
+      // Clean up liters saved text
       let cleanLiters = (tip.liters_saved || "").trim();
-      // Remove leading approximate words
       cleanLiters = cleanLiters.replace(/^(approximately|approx\.?|about)\s+/i, "");
-      // Remove leading - and ~ and spaces
       cleanLiters = cleanLiters.replace(/^[-~\s]+/g, "");
-      
-      // Extract numeric value or range
       const numMatch = cleanLiters.match(/[\d\s-–]+/);
       let amount = numMatch ? numMatch[0].trim() : cleanLiters;
-      if (!amount) amount = cleanLiters;
-      
-      // Strip any trailing units
       amount = amount.replace(/\s*(liters|litres|l|ltr|ltrs|L)\b/i, "");
-
-      const badgeText = `💧 Saves ~${amount} litres/day`;
+      const badgeText = `Saves ~${amount} L/day`;
 
       tipRow.innerHTML = `
-        <div class="tip-icon-box" aria-hidden="true">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            ${svgPath}
-          </svg>
-        </div>
+        <div class="tip-number">${idx + 1}</div>
         <div class="tip-content-box">
           <div class="tip-title-row">
             <h4 class="tip-title">${tip.title}</h4>
-            <span class="tip-badge">${badgeText}</span>
+            <div>
+              <span class="tip-impact">${badgeText}</span>
+            </div>
           </div>
           <p class="tip-desc">${tip.description}</p>
         </div>
@@ -728,38 +841,57 @@ ${JSON.stringify(userData, null, 2)}`;
       tipsListContainer.appendChild(tipRow);
     });
 
-    // 4. 7-Day Action Plan Render
+    // 5. Timeline checklist
     renderTimelineChecklist(data.weekly_plan);
+  }
+
+  // Count Up Numerical Values
+  function countUp(element, target, duration = 1200, prefix = '') {
+    let start = 0;
+    const step = timestamp => {
+      if (!start) start = timestamp;
+      const progress = Math.min((timestamp - start) / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3); // easeOutCubic
+      element.textContent = prefix + Math.floor(eased * target);
+      if (progress < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+
+  // Bento Staggered reveal
+  function revealBentoCards() {
+    const cards = document.querySelectorAll('.bento-card');
+    cards.forEach((card, i) => {
+      card.style.opacity = '0';
+      card.style.transform = 'translateY(20px)';
+      setTimeout(() => {
+        card.style.transition = 'opacity 0.6s ease, transform 0.6s cubic-bezier(0.4, 0, 0.2, 1)';
+        card.style.opacity = '1';
+        card.style.transform = 'translateY(0)';
+      }, 100 + (i * 120));
+    });
   }
 
   function getSvgIconForTip(title, desc) {
     const text = (title + " " + desc).toLowerCase();
-    
-    // Shower
     if (text.includes("shower") || text.includes("bath") || text.includes("bucket")) {
       return `<path d="M12 22a7 7 0 0 0 7-7c0-4.3-7-11-7-11S5 10.7 5 15a7 7 0 0 0 7 7z"/>`;
     }
-    // Tap / brush
     if (text.includes("tap") || text.includes("faucet") || text.includes("brush") || text.includes("leak")) {
       return `<path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>`;
     }
-    // Laundry / machine
     if (text.includes("wash") || text.includes("machine") || text.includes("laundry") || text.includes("load")) {
       return `<rect x="4" y="4" width="16" height="16" rx="2" ry="2"/><circle cx="12" cy="12" r="4"/><path d="M12 10a2 2 0 1 0 0 4"/>`;
     }
-    // Dish washing
     if (text.includes("dish") || text.includes("utensil") || text.includes("sink")) {
       return `<circle cx="12" cy="12" r="10"/><path d="M8 12h8M12 8v8"/>`;
     }
-    // Garden
     if (text.includes("garden") || text.includes("plant") || text.includes("water plants") || text.includes("watering")) {
       return `<path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm0 14V8M8 12h8"/>`;
     }
-    // Storage tank
     if (text.includes("tank") || text.includes("overflow") || text.includes("sensor") || text.includes("valve")) {
       return `<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>`;
     }
-    // Default Lightbulb
     return `<path d="M9 21h6M9 18h6M10 15c-1.5-1.5-2-3.2-2-5a4 4 0 1 1 8 0c0 1.8-.5 3.5-2 5M12 22V15"/>`;
   }
 
@@ -767,15 +899,21 @@ ${JSON.stringify(userData, null, 2)}`;
     timelineContainer.innerHTML = "";
     weeklyPlan.forEach((plan, index) => {
       const card = document.createElement("div");
-      card.className = "timeline-card";
+      card.className = "timeline-item";
       if (activeTimelineChecklist[index]) {
-        card.classList.add("checked");
+        card.classList.add("completed");
       }
 
+      // Convert "Day 1", "Day 2" to numeric
+      const dayNumStr = plan.day.replace(/[^\d]/g, "");
+
       card.innerHTML = `
-        <div class="timeline-day">${plan.day}</div>
+        <div class="day-marker">
+          <div class="day-label">Day</div>
+          <div class="day-number">${dayNumStr || (index + 1)}</div>
+        </div>
         <div class="timeline-task">${plan.task}</div>
-        <div class="timeline-check" aria-hidden="true">
+        <div class="timeline-checkbox ${activeTimelineChecklist[index] ? 'checked' : ''}" aria-hidden="true">
           <svg viewBox="0 0 24 24">
             <polyline points="20 6 9 17 4 12"></polyline>
           </svg>
@@ -784,15 +922,35 @@ ${JSON.stringify(userData, null, 2)}`;
 
       card.addEventListener("click", () => {
         activeTimelineChecklist[index] = !activeTimelineChecklist[index];
-        card.classList.toggle("checked");
+        
+        const checkbox = card.querySelector(".timeline-checkbox");
+        if (activeTimelineChecklist[index]) {
+          card.classList.add("completed");
+          checkbox.classList.add("checked");
+        } else {
+          card.classList.remove("completed");
+          checkbox.classList.remove("checked");
+        }
+
         localStorage.setItem("aquasense_checklist", JSON.stringify(activeTimelineChecklist));
+        checkAllCompleted();
       });
 
       timelineContainer.appendChild(card);
     });
+
+    checkAllCompleted();
   }
 
-  // Check if historical calculation resides in LocalStorage
+  function checkAllCompleted() {
+    const allCompleted = activeTimelineChecklist.length > 0 && activeTimelineChecklist.every(val => val === true);
+    if (allCompleted) {
+      completionBanner.style.display = "block";
+    } else {
+      completionBanner.style.display = "none";
+    }
+  }
+
   function checkProgressChecklist() {
     const historicalResult = localStorage.getItem("aquasense_last_result");
     const historicalChecklist = localStorage.getItem("aquasense_checklist");
@@ -802,28 +960,43 @@ ${JSON.stringify(userData, null, 2)}`;
       if (historicalChecklist) {
         activeTimelineChecklist = JSON.parse(historicalChecklist);
       }
+      
+      // Render immediately
+      heroSection.style.display = "none";
+      calculatorSection.style.display = "none";
+      resultsSection.style.display = "block";
       renderDashboard(cachedResponseData);
+    } else {
+      updateWizardUI();
     }
   }
 
   // --- RECALCULATE TRIGGER ---
   recalculateBtn.addEventListener("click", () => {
-    // Clear last calculation state but keep form inputs
     localStorage.removeItem("aquasense_last_result");
     localStorage.removeItem("aquasense_checklist");
     cachedResponseData = null;
     activeTimelineChecklist = Array(7).fill(false);
 
-    // Swap panels back
-    resultsSection.style.display = "none";
-    heroSection.style.display = "block";
-    calculatorSection.style.display = "block";
-    form.style.display = "block";
-    
-    // Reset wizard index to step 1
+    // Swap panels with transitions
+    switchPanel(resultsSection, calculatorSection);
+    setTimeout(() => {
+      heroSection.style.display = "block";
+      heroSection.classList.add("entering");
+      heroSection.offsetHeight;
+      heroSection.classList.remove("entering");
+    }, 400);
+
     currentStep = 1;
     updateWizardUI();
     
+    // reset form input ranges fill property
+    const sliders = [householdCountInput, showerDurationInput, washingMachineInput, carWashingInput];
+    sliders.forEach(slider => {
+      const pct = ((slider.value - slider.min) / (slider.max - slider.min)) * 100;
+      slider.style.setProperty('--slider-fill', `${pct}%`);
+    });
+
     calculatorCard.scrollIntoView({ behavior: "smooth" });
   });
 
