@@ -220,7 +220,7 @@ document.addEventListener("DOMContentLoaded", () => {
     animate();
 
     // Cleanup interval if component unmounts
-    window.addEventListener("unload", () => {
+    window.addEventListener("pagehide", () => {
       clearInterval(spawnInterval);
       cancelAnimationFrame(rippleAnimId);
     });
