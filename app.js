@@ -77,6 +77,58 @@ document.addEventListener("DOMContentLoaded", () => {
     "Billing & Storage"
   ];
 
+  // --- DARK MODE THEME SYSTEM ---
+  const themeToggleBtn = document.getElementById("themeToggle");
+  const htmlEl = document.documentElement;
+
+  function getSystemTheme() {
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+
+  function applyTheme(theme) {
+    htmlEl.setAttribute('data-theme', theme);
+  }
+
+  function initTheme() {
+    const stored = localStorage.getItem('aquasense-theme');
+    if (stored) {
+      applyTheme(stored);
+    } else {
+      applyTheme(getSystemTheme());
+    }
+  }
+
+  // Initialize theme immediately
+  initTheme();
+
+  // Toggle button click handler
+  if (themeToggleBtn) {
+    themeToggleBtn.addEventListener('click', () => {
+      const current = htmlEl.getAttribute('data-theme') || 'light';
+      const next = current === 'dark' ? 'light' : 'dark';
+      applyTheme(next);
+      localStorage.setItem('aquasense-theme', next);
+    });
+  }
+
+  // Listen to OS-level theme changes (only if user hasn't explicitly chosen)
+  if (window.matchMedia) {
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+      if (!localStorage.getItem('aquasense-theme')) {
+        applyTheme(e.matches ? 'dark' : 'light');
+      }
+    });
+  }
+
+  // Helper to get ripple color based on theme
+  function getRippleColor(alpha) {
+    const isDark = htmlEl.getAttribute('data-theme') === 'dark';
+    if (isDark) {
+      return `rgba(91, 163, 192, ${alpha * 0.7})`;
+    }
+    return `rgba(91, 163, 192, ${alpha})`;
+  }
+
   // --- INITIALIZATION ---
   initAmbientRipples();
   initChoiceCards();
@@ -202,7 +254,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const rip = ripples[i];
         ctx.beginPath();
         ctx.arc(rip.x, rip.y, rip.r, 0, Math.PI * 2);
-        ctx.strokeStyle = `rgba(91, 163, 192, ${rip.alpha})`;
+        ctx.strokeStyle = getRippleColor(rip.alpha);
         ctx.lineWidth = 1.5;
         ctx.stroke();
 
