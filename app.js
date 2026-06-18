@@ -94,7 +94,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (stored) {
       applyTheme(stored);
     } else {
-      applyTheme(getSystemTheme());
+      applyTheme('light');
     }
   }
 
