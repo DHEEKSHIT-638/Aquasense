@@ -64,8 +64,9 @@ function getApplicableTips(userData) {
   if (washingMachineUsesPerWeek > 1) {
     tips.push({
       key: "max_washing_loads",
-      liters_saved: RATES.washingMachineLPerLoad,
-      unit: "L/load (≈" + Math.round(RATES.washingMachineLPerLoad / 7) + " L/day)"
+      liters_saved: RATES.washingMachineLPerLoad, // 80, for display: "80 L/load"
+      daily_equivalent: Math.round(RATES.washingMachineLPerLoad / 7), // 11, for summation
+      unit: "L/load"
     });
   }
 
@@ -102,6 +103,19 @@ function getApplicableTips(userData) {
   }
 
   return tips;
+}
+
+function calculateSavings(tips, monthlyWaterBillINR) {
+  const dailySavingsLiters = Math.round(tips.reduce((sum, t) => {
+    const val = typeof t.daily_equivalent === "number" ? t.daily_equivalent : t.liters_saved;
+    return sum + (typeof val === "number" ? val : 0);
+  }, 0));
+  const monthlyKLSaved = (dailySavingsLiters * 30) / 1000;
+  const tariffBasedSavings = Math.round(monthlyKLSaved * 22);
+  const monthlySavingsINR = monthlyWaterBillINR
+    ? Math.round(Math.min(monthlyWaterBillINR * 0.7, tariffBasedSavings))
+    : tariffBasedSavings;
+  return { dailySavingsLiters, monthlySavingsINR };
 }
 
 const goldenCases = [
@@ -264,6 +278,37 @@ if (!hasForbidden) {
 } else {
   failedTests++;
   console.error("❌ Tip Filtering FAIL (Irrelevant tips found):", tipsResult);
+}
+
+// Summation Verification Case
+console.log("\nRunning Daily Savings Summation Verification Case...");
+const verificationInputs = {
+  householdCount: 4,
+  showerDurationMinutesPerPerson: 8,
+  tapsLeftRunningDuringBrushing: "no",
+  washingMachineUsesPerWeek: 4,
+  dishwashingMethod: "hand",
+  watersGarden: "no",
+  gardenWateringMinutesPerDay: 0,
+  carWashTimesPerWeek: 1,
+  waterTankOverflowAwareness: "no"
+};
+
+const verificationTips = getApplicableTips(verificationInputs);
+const verificationSavings = calculateSavings(verificationTips, null);
+
+const expectedSum = 224; // 120 (shower) + 11 (washing daily equiv) + 70 (dishwash bucket) + 23 (car wash bucket)
+const passSummation = verificationSavings.dailySavingsLiters === expectedSum;
+
+if (passSummation) {
+  console.log(`✅ Summation PASS (Daily Savings sum matches expected ${expectedSum} L/day exactly)`);
+} else {
+  failedTests++;
+  console.error(`❌ Summation FAIL (Expected exact sum: ${expectedSum} L/day, got: ${verificationSavings.dailySavingsLiters} L/day)`);
+  verificationTips.forEach(t => {
+    const val = typeof t.daily_equivalent === "number" ? t.daily_equivalent : t.liters_saved;
+    console.log(`   - Tip key: ${t.key}, value: ${val} (raw: ${t.liters_saved}, unit: ${t.unit})`);
+  });
 }
 
 console.log("-----------------------------------------------");

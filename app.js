@@ -733,8 +733,9 @@ document.addEventListener("DOMContentLoaded", () => {
     if (washingMachineUsesPerWeek > 1) {
       tips.push({
         key: "max_washing_loads",
-        liters_saved: RATES.washingMachineLPerLoad,
-        unit: "L/load (≈" + Math.round(RATES.washingMachineLPerLoad / 7) + " L/day)"
+        liters_saved: RATES.washingMachineLPerLoad, // 80, for display: "80 L/load"
+        daily_equivalent: Math.round(RATES.washingMachineLPerLoad / 7), // 11, for summation
+        unit: "L/load"
       });
     }
 
@@ -774,7 +775,10 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function calculateSavings(tips, monthlyWaterBillINR) {
-    const dailySavingsLiters = Math.round(tips.reduce((sum, t) => sum + (typeof t.liters_saved === "number" ? t.liters_saved : 0), 0));
+    const dailySavingsLiters = Math.round(tips.reduce((sum, t) => {
+      const val = typeof t.daily_equivalent === "number" ? t.daily_equivalent : t.liters_saved;
+      return sum + (typeof val === "number" ? val : 0);
+    }, 0));
     const monthlyKLSaved = (dailySavingsLiters * 30) / 1000;
     const tariffBasedSavings = Math.round(monthlyKLSaved * 22);
     const monthlySavingsINR = monthlyWaterBillINR
@@ -867,6 +871,7 @@ document.addEventListener("DOMContentLoaded", () => {
         title,
         description,
         liters_saved: calcTip.liters_saved,
+        daily_equivalent: calcTip.daily_equivalent,
         unit: calcTip.unit
       });
     });
