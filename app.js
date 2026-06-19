@@ -697,16 +697,49 @@ document.addEventListener("DOMContentLoaded", () => {
 - Bureau of Indian Standards (BIS) IS 1172:1993 domestic water supply standard, which specifies 135 liters per capita per day (lpcd) for residential buildings with full piping in Indian cities.
 - Municipal water shortage limits and water pricing tariff slabs of Indian tier 1 and tier 2 cities.
 
-Analyze the user's household water usage data relative to these standard benchmarks. Keep in mind that Indian households face specific challenges like water tankers, summer shortages, and high billing tier jumps.
+Analyze the user's household water usage data relative to these standard benchmarks. Use the following strict constants and formulas to ensure calculations are mathematically consistent, scientifically accurate, and realistic:
 
-Formulate a detailed water waste assessment containing:
-1. A risk classification (LOW/MODERATE/HIGH) based on average household per capita consumption.
-2. A waste risk score out of 100 (where 0 means highly conservationist, 100 means extreme leakage and waste).
-3. A 2-line concise and punchy explanation of the score.
-4. Exactly 5 highly personalized, specific, actionable water-saving tips mapped to their answers. Do not output generic advice.
-5. A 7-day action plan containing one concrete, incremental task per day to resolve their waste issues.
-6. Combined daily water savings in liters.
-7. Estimated monthly bill savings in INR if they complete the tips.
+1. Baselines & Flow Rates:
+- Shower flow rate = 10 L/minute. (A bucket bath uses 20 L total).
+- Faucet flow rate (for brushing/handwashing/dishes) = 6 L/minute.
+- Brushing teeth while leaving tap running wastes 24 L/day per person (assumes tap runs for 2 minutes, twice daily).
+- Washing machine uses 80 L/load.
+- Hand dishwashing with running tap uses 100 L/day (assumes tap runs for 15 minutes total). Bucket dishwashing uses 30 L/day.
+- Garden watering with a hose uses 15 L/minute.
+- Car washing with a hose uses 200 L/wash. Washing with a bucket uses 40 L/wash.
+- Water tank overflow event wastes 100 L/event.
+- Basic hygiene & metabolic baseline (drinking, cooking, sanitation, toilet flushing) = 50 LPCD (liters per capita daily) per person.
+
+2. Daily Total Consumption & LPCD:
+- Daily Total Consumption = (ShowerDurationMinutesPerPerson * 10 * HouseholdCount) + (if TapsLeftRunningDuringBrushing == "yes", 24 * HouseholdCount, 0) + (WashingMachineUsesPerWeek * 80 / 7) + (if DishwashingMethod == "hand", 100, 15) + (if WatersGarden == "yes", GardenWateringMinutesPerDay * 15, 0) + (CarWashTimesPerWeek * 200 / 7) + (if WaterTankOverflowAwareness == "yes", 30, 0) + (50 * HouseholdCount).
+- Per Capita Consumption (LPCD) = Daily Total Consumption / HouseholdCount.
+
+3. Risk Level & Score:
+- Risk Level: LOW if LPCD <= 100; MODERATE if 100 < LPCD <= 180; HIGH if LPCD > 180.
+- Risk Score (out of 100): min(100, max(0, Math.round((LPCD - 80) * 0.8))).
+
+4. Tip-Level Savings Calculations & Units:
+Calculate savings for the recommended tips using the following formulas and specify the exact unit in "liters_saved" (e.g. "400 L/day", "160 L/wash", "80 L/week", "100 L/event"):
+- Shorten shower (target 5 min): Saves (ShowerDurationMinutesPerPerson - 5) * 10 * HouseholdCount L/day. (Specify as "X L/day"). Make sure the tip description explains that this is the combined daily savings across all household members.
+- Turn off tap during brushing: Saves 24 * HouseholdCount L/day. (Specify as "X L/day").
+- Maximize washing machine loads (reducing uses by 1-2 loads/week): Saves 80 L/load saved. (Specify as "80 L/load" or "160 L/week").
+- Adopt bucket dishwashing: Saves 70 L/day. (Specify as "70 L/day").
+- Switch garden watering to drip/bucket: Saves GardenWateringMinutesPerDay * 12 L/day. (Specify as "X L/day").
+- Use bucket for car washing: Saves 160 L/wash. (Specify as "160 L/wash").
+- Fix water tank overflow (install float valve/alarm): Saves 100 L/event. (Specify as "100 L/event").
+
+5. Combined Daily Savings (estimated_daily_savings_liters):
+- Calculate the combined daily savings in liters by converting all weekly and event-based savings to their daily equivalents and summing them up:
+  Combined Daily Savings = Sum of all daily tip savings + (Sum of weekly tip savings / 7) + (Sum of event-based tip savings / 7).
+- Ensure this is an integer.
+
+6. Estimated Monthly Bill Savings (estimated_monthly_bill_savings_inr):
+- Calculate monthly water saved (kL) = (Combined Daily Savings * 30) / 1000.
+- If the user provided a monthly water bill (monthlyWaterBillINR):
+  Estimated Monthly Bill Savings = min(monthlyWaterBillINR * 0.7, Math.round(Monthly Water Saved (kL) * 22)).
+- If no monthly water bill was provided:
+  Estimated Monthly Bill Savings = Math.round(Monthly Water Saved (kL) * 22) (using a standard municipal tariff average of Rs. 22 per kL).
+- Ensure this is an integer.
 
 Ensure your entire output strictly conforms to the requested JSON response schema. No markdown formatting, no comments, no surrounding wrappers. Return ONLY a valid JSON string.`;
 
@@ -859,10 +892,20 @@ ${JSON.stringify(userData, null, 2)}`;
       let cleanLiters = (tip.liters_saved || "").trim();
       cleanLiters = cleanLiters.replace(/^(approximately|approx\.?|about)\s+/i, "");
       cleanLiters = cleanLiters.replace(/^[-~\s]+/g, "");
-      const numMatch = cleanLiters.match(/[\d\s-–]+/);
-      let amount = numMatch ? numMatch[0].trim() : cleanLiters;
-      amount = amount.replace(/\s*(liters|litres|l|ltr|ltrs|L)\b/i, "");
-      const badgeText = `Saves ~${amount} L/day`;
+      
+      // If it doesn't specify the time period or unit format (like "/day", "/week", "/wash", "per", "load"), append "L/day"
+      if (!cleanLiters.includes("/") && !cleanLiters.toLowerCase().includes("per") && !cleanLiters.toLowerCase().includes("load")) {
+        const numMatch = cleanLiters.match(/[\d\s-–]+/);
+        const amount = numMatch ? numMatch[0].trim() : cleanLiters;
+        cleanLiters = `${amount} L/day`;
+      }
+      
+      // If it doesn't have "L" or "liters", make sure it says e.g. "160 L/wash" instead of "160/wash"
+      if (!cleanLiters.toUpperCase().includes("L") && !cleanLiters.toLowerCase().includes("liter")) {
+        cleanLiters = cleanLiters.replace(/(\/\w+)/, " L$1");
+      }
+      
+      const badgeText = `Saves ~${cleanLiters}`;
 
       tipRow.innerHTML = `
         <div class="tip-number">${idx + 1}</div>
