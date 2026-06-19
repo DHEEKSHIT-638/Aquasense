@@ -1,3 +1,11 @@
+/**
+ * AquaSense Accuracy Refactor
+ * ----------------------------
+ * 1. Decoupled all arithmetic calculations from the Gemini API and implemented them deterministically in JS.
+ * 2. Added static fallbacks (STATIC_FALLBACKS) and narrative sanitization (sanitizeNarrative) for graceful degradation if the API is offline.
+ * 3. Updated submitWizardData to call calculations first and restrict Gemini to narrative-only generation.
+ * 4. Maintained the exact dashboard data rendering schema.
+ */
 const EMBEDDED_API_KEY = ""; // Paste your API key here or enter it when prompted in the browser
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -658,6 +666,231 @@ document.addEventListener("DOMContentLoaded", () => {
     }, 1000);
   }
 
+  // --- CALCULATION MODULE & DETERMINISTIC TIP GENERATOR ---
+  const RATES = {
+    showerLPerMin: 10,
+    faucetLPerMin: 6,
+    brushingWasteLPerPersonDay: 24, // 2 min x2/day x 6L/min, run via tap_running flag
+    washingMachineLPerLoad: 80,
+    dishwashHandLDay: 100,
+    dishwashBucketLDay: 30,
+    dishwashMachineLDay: 15, // documented estimate for a standard efficient dishwasher cycle, amortized per day
+    gardenHoseLPerMin: 15,
+    gardenDripLPerMin: 3, // hose 15 L/min -> drip/bucket equivalent ~3 L/min, savings = 12 L/min
+    carWashHoseL: 200,
+    carWashBucketL: 40,
+    tankOverflowLDay: 30, // BUG FIX: flat daily baseline IS the full overflow waste
+    basicHygieneLPCD: 50
+  };
+
+  function calculateConsumption(userData) {
+    const {
+      householdCount, showerDurationMinutesPerPerson, tapsLeftRunningDuringBrushing,
+      washingMachineUsesPerWeek, dishwashingMethod, watersGarden,
+      gardenWateringMinutesPerDay, carWashTimesPerWeek, waterTankOverflowAwareness
+    } = userData;
+
+    const dailyTotal =
+      (showerDurationMinutesPerPerson * RATES.showerLPerMin * householdCount) +
+      (tapsLeftRunningDuringBrushing === "yes" ? RATES.brushingWasteLPerPersonDay * householdCount : 0) +
+      (washingMachineUsesPerWeek * RATES.washingMachineLPerLoad / 7) +
+      (dishwashingMethod === "hand" ? RATES.dishwashHandLDay : RATES.dishwashMachineLDay) +
+      (watersGarden === "yes" ? gardenWateringMinutesPerDay * RATES.gardenHoseLPerMin : 0) +
+      (carWashTimesPerWeek * RATES.carWashHoseL / 7) +
+      (waterTankOverflowAwareness === "yes" ? RATES.tankOverflowLDay : 0) +
+      (RATES.basicHygieneLPCD * householdCount);
+
+    const lpcd = dailyTotal / householdCount;
+    const riskLevel = lpcd <= 100 ? "LOW" : lpcd <= 180 ? "MODERATE" : "HIGH";
+    const riskScore = Math.max(0, Math.min(100, Math.round((lpcd - 80) * 0.8)));
+
+    return { dailyTotal: Math.round(dailyTotal * 100) / 100, lpcd: Math.round(lpcd * 100) / 100, riskLevel, riskScore };
+  }
+
+  function getApplicableTips(userData) {
+    const { householdCount, showerDurationMinutesPerPerson, tapsLeftRunningDuringBrushing,
+            washingMachineUsesPerWeek, dishwashingMethod, watersGarden,
+            gardenWateringMinutesPerDay, carWashTimesPerWeek, waterTankOverflowAwareness } = userData;
+
+    const tips = [];
+
+    if (showerDurationMinutesPerPerson > 5) {
+      tips.push({
+        key: "shorten_shower",
+        liters_saved: Math.round((showerDurationMinutesPerPerson - 5) * RATES.showerLPerMin * householdCount),
+        unit: "L/day"
+      });
+    }
+
+    if (tapsLeftRunningDuringBrushing === "yes") {
+      tips.push({
+        key: "turn_off_tap",
+        liters_saved: RATES.brushingWasteLPerPersonDay * householdCount,
+        unit: "L/day"
+      });
+    }
+
+    if (washingMachineUsesPerWeek > 1) {
+      tips.push({
+        key: "max_washing_loads",
+        liters_saved: RATES.washingMachineLPerLoad,
+        unit: "L/load (≈" + Math.round(RATES.washingMachineLPerLoad / 7) + " L/day)"
+      });
+    }
+
+    if (dishwashingMethod === "hand") {
+      tips.push({
+        key: "bucket_dishwashing",
+        liters_saved: RATES.dishwashHandLDay - RATES.dishwashBucketLDay,
+        unit: "L/day"
+      });
+    }
+
+    if (watersGarden === "yes" && gardenWateringMinutesPerDay > 0) {
+      tips.push({
+        key: "garden_drip",
+        liters_saved: Math.round(gardenWateringMinutesPerDay * (RATES.gardenHoseLPerMin - RATES.gardenDripLPerMin)),
+        unit: "L/day"
+      });
+    }
+
+    if (carWashTimesPerWeek > 0) {
+      tips.push({
+        key: "bucket_car_wash",
+        liters_saved: Math.round((RATES.carWashHoseL - RATES.carWashBucketL) * carWashTimesPerWeek / 7),
+        unit: "L/day"
+      });
+    }
+
+    if (waterTankOverflowAwareness === "yes") {
+      tips.push({
+        key: "fix_tank_overflow",
+        liters_saved: RATES.tankOverflowLDay,
+        unit: "L/day"
+      });
+    }
+
+    return tips;
+  }
+
+  function calculateSavings(tips, monthlyWaterBillINR) {
+    const dailySavingsLiters = Math.round(tips.reduce((sum, t) => sum + (typeof t.liters_saved === "number" ? t.liters_saved : 0), 0));
+    const monthlyKLSaved = (dailySavingsLiters * 30) / 1000;
+    const tariffBasedSavings = Math.round(monthlyKLSaved * 22);
+    const monthlySavingsINR = monthlyWaterBillINR
+      ? Math.round(Math.min(monthlyWaterBillINR * 0.7, tariffBasedSavings))
+      : tariffBasedSavings;
+    return { dailySavingsLiters, monthlySavingsINR };
+  }
+
+  const STATIC_FALLBACKS = {
+    score_explanations: {
+      LOW: "Your household water footprint is within sustainable limits. Keep up the excellent conservation habits!",
+      MODERATE: "Your household water footprint is moderate. There are clear opportunities to optimize usage and save on your bills.",
+      HIGH: "Your household water footprint is high, indicating significant waste. Implementing the tips below will save substantial water and money."
+    },
+    tips: {
+      shorten_shower: {
+        title: "Shorten Shower Times",
+        description: "Aim to reduce daily showers to 5 minutes per person. This is one of the easiest ways to significantly curb indoor water waste across your entire household."
+      },
+      turn_off_tap: {
+        title: "Turn Off Taps While Brushing",
+        description: "Close the tap while brushing teeth. Leaving the tap running wastes a large volume of water needlessly twice a day."
+      },
+      max_washing_loads: {
+        title: "Maximize Washing Machine Loads",
+        description: "Ensure your washing machine runs only with full loads. This avoids waste by reducing the total number of weekly laundry cycles."
+      },
+      bucket_dishwashing: {
+        title: "Adopt Bucket Dishwashing",
+        description: "Wash dishes in a filled basin or bucket instead of under a running tap. This dramatically cuts flow waste during soaping and rinsing."
+      },
+      garden_drip: {
+        title: "Use Drip or Watering Cans",
+        description: "Switch from hose watering to highly targeted drip irrigation or watering cans to prevent evaporative and runoff waste."
+      },
+      bucket_car_wash: {
+        title: "Use a Bucket for Car Washing",
+        description: "Wash your vehicle using a bucket and sponge instead of a running hose. This cuts wash consumption by up to 80%."
+      },
+      fix_tank_overflow: {
+        title: "Fix Water Tank Overflow",
+        description: "Install an automatic water level controller or float valve on your storage tank to prevent waste from overflow events."
+      }
+    },
+    weekly_plan: [
+      { day: "Day 1", task: "Time your showers today and aim for a maximum of 5 minutes per person." },
+      { day: "Day 2", task: "Focus on turning off the tap while brushing teeth." },
+      { day: "Day 3", task: "Only run the washing machine when you have a full load." },
+      { day: "Day 4", task: "Try washing dishes in a basin or using the two-bucket method." },
+      { day: "Day 5", task: "Water your garden plants using a watering can instead of a hose." },
+      { day: "Day 6", task: "If washing vehicles, use a bucket and sponge rather than a hose." },
+      { day: "Day 7", task: "Check storage tanks and plan the installation of a float valve or overflow alarm." }
+    ]
+  };
+
+  function sanitizeNarrative(geminiData, riskLevel, tips) {
+    const safeData = {
+      score_explanation: "",
+      tips: [],
+      weekly_plan: []
+    };
+
+    if (geminiData && geminiData.score_explanation && geminiData.score_explanation.trim().length >= 10) {
+      safeData.score_explanation = geminiData.score_explanation.trim();
+    } else {
+      safeData.score_explanation = STATIC_FALLBACKS.score_explanations[riskLevel] || STATIC_FALLBACKS.score_explanations.MODERATE;
+    }
+
+    const inputTips = geminiData && Array.isArray(geminiData.tips) ? geminiData.tips : [];
+    
+    tips.forEach((calcTip, idx) => {
+      const geminiTip = inputTips[idx] || inputTips.find(t => {
+        const tTitle = (t.title || "").toLowerCase();
+        const cKey = calcTip.key.replace(/_/g, " ");
+        return tTitle.includes(cKey) || cKey.includes(tTitle);
+      });
+
+      const fallbackInfo = STATIC_FALLBACKS.tips[calcTip.key] || { title: "Conservation Tip", description: "Save water by adopting efficient habits." };
+      
+      const title = geminiTip && geminiTip.title && geminiTip.title.trim().length >= 3
+        ? geminiTip.title.trim()
+        : fallbackInfo.title;
+
+      const description = geminiTip && geminiTip.description && geminiTip.description.trim().length >= 10
+        ? geminiTip.description.trim()
+        : fallbackInfo.description;
+
+      safeData.tips.push({
+        key: calcTip.key,
+        title,
+        description,
+        liters_saved: calcTip.liters_saved,
+        unit: calcTip.unit
+      });
+    });
+
+    const inputWeeklyPlan = geminiData && Array.isArray(geminiData.weekly_plan) ? geminiData.weekly_plan : [];
+    for (let i = 0; i < 7; i++) {
+      const geminiDay = inputWeeklyPlan[i];
+      const fallbackDay = STATIC_FALLBACKS.weekly_plan[i];
+      const dayName = geminiDay && geminiDay.day && geminiDay.day.trim().length > 0
+        ? geminiDay.day.trim()
+        : fallbackDay.day;
+      const taskDesc = geminiDay && geminiDay.task && geminiDay.task.trim().length >= 5
+        ? geminiDay.task.trim()
+        : fallbackDay.task;
+
+      safeData.weekly_plan.push({
+        day: dayName,
+        task: taskDesc
+      });
+    }
+
+    return safeData;
+  }
+
   // --- GEMINI API INTEGRATION ---
   async function submitWizardData() {
     const endpoint = "/api/gemini";
@@ -688,63 +921,44 @@ document.addEventListener("DOMContentLoaded", () => {
       monthlyWaterBillINR: monthlyBill
     };
 
+    // 1. Perform deterministic calculations locally
+    const consumption = calculateConsumption(userData);
+    const applicableTips = getApplicableTips(userData);
+    const savings = calculateSavings(applicableTips, monthlyBill);
+
     updateLoaderStatus("Consulting IS 1172 standards & regional policies...");
     startLoader();
 
-    const systemPrompt = `You are AquaSense, an expert AI water conservation advisor trained on:
-- World Health Organization (WHO) basic domestic water access guidelines (minimum 50-100 liters per capita daily).
-- United Nations Sustainable Development Goal (SDG) 6 targets (specifically Target 6.4 regarding water use efficiency).
-- Bureau of Indian Standards (BIS) IS 1172:1993 domestic water supply standard, which specifies 135 liters per capita per day (lpcd) for residential buildings with full piping in Indian cities.
-- Municipal water shortage limits and water pricing tariff slabs of Indian tier 1 and tier 2 cities.
+    const systemPrompt = `You are AquaSense, an expert AI water conservation advisor.
+Your job is to write high-quality, natural-language narrative copy and personalize recommendations based on water footprint calculations that have already been pre-computed for you.
 
-Analyze the user's household water usage data relative to these standard benchmarks. Use the following strict constants and formulas to ensure calculations are mathematically consistent, scientifically accurate, and realistic:
+You will be given:
+1. The household's demographics and habits.
+2. The calculated baseline consumption, per-capita daily use (LPCD), and risk level (LOW/MODERATE/HIGH).
+3. A list of applicable water-saving tips, including the exact volume of water saved for each tip (and its unit).
 
-1. Baselines & Flow Rates:
-- Shower flow rate = 10 L/minute. (A bucket bath uses 20 L total).
-- Faucet flow rate (for brushing/handwashing/dishes) = 6 L/minute.
-- Brushing teeth while leaving tap running wastes 24 L/day per person (assumes tap runs for 2 minutes, twice daily).
-- Washing machine uses 80 L/load.
-- Hand dishwashing with running tap uses 100 L/day (assumes tap runs for 15 minutes total). Bucket dishwashing uses 30 L/day.
-- Garden watering with a hose uses 15 L/minute.
-- Car washing with a hose uses 200 L/wash. Washing with a bucket uses 40 L/wash.
-- Water tank overflow event wastes 100 L/event.
-- Basic hygiene & metabolic baseline (drinking, cooking, sanitation, toilet flushing) = 50 LPCD (liters per capita daily) per person.
+Based on this input, you must:
+1. Write a 2-line concise, punchy score explanation (score_explanation) referencing the risk level and LPCD. Do not invent or change any numbers.
+2. For each tip in the provided list, write a compelling, tailored title and description. You MUST mention the exact liters_saved value and unit provided in the input verbatim in the description to explain the impact to the user. Do not alter or recalculate the numbers.
+3. Generate a 7-day action plan (weekly_plan) of 7 tasks (one for each day) that sequences the tips into a realistic, actionable roadmap.
 
-2. Daily Total Consumption & LPCD:
-- Daily Total Consumption = (ShowerDurationMinutesPerPerson * 10 * HouseholdCount) + (if TapsLeftRunningDuringBrushing == "yes", 24 * HouseholdCount, 0) + (WashingMachineUsesPerWeek * 80 / 7) + (if DishwashingMethod == "hand", 100, 15) + (if WatersGarden == "yes", GardenWateringMinutesPerDay * 15, 0) + (CarWashTimesPerWeek * 200 / 7) + (if WaterTankOverflowAwareness == "yes", 30, 0) + (50 * HouseholdCount).
-- Per Capita Consumption (LPCD) = Daily Total Consumption / HouseholdCount.
+CRITICAL RULES:
+- Do not output any numbers that were not provided to you in the input.
+- Use the exact liters_saved and unit given for each tip verbatim in your description (e.g., if you are given 400 L/day, use "400 L/day" exactly).
+- Ensure your entire output strictly conforms to the requested JSON response schema. No markdown formatting, no comments, no surrounding wrappers. Return ONLY a valid JSON string.`;
 
-3. Risk Level & Score:
-- Risk Level: LOW if LPCD <= 100; MODERATE if 100 < LPCD <= 180; HIGH if LPCD > 180.
-- Risk Score (out of 100): min(100, max(0, Math.round((LPCD - 80) * 0.8))).
+    const userPrompt = `Here are the pre-computed calculations and user data:
+- User Data: ${JSON.stringify(userData, null, 2)}
+- Calculated Footprint:
+  - Daily Total: ${consumption.dailyTotal} L/day
+  - Per Capita Daily (LPCD): ${consumption.lpcd} L/person/day
+  - Risk Level: ${consumption.riskLevel}
+  - Risk Score: ${consumption.riskScore}/100
+- Applicable Tips & Pre-calculated Savings:
+  ${JSON.stringify(applicableTips.map(t => ({ key: t.key, liters_saved: t.liters_saved, unit: t.unit })), null, 2)}`;
 
-4. Tip-Level Savings Calculations & Units:
-Calculate savings for the recommended tips using the following formulas and specify the exact unit in "liters_saved" (e.g. "400 L/day", "160 L/wash", "80 L/week", "100 L/event"):
-- Shorten shower (target 5 min): Saves (ShowerDurationMinutesPerPerson - 5) * 10 * HouseholdCount L/day. (Specify as "X L/day"). Make sure the tip description explains that this is the combined daily savings across all household members.
-- Turn off tap during brushing: Saves 24 * HouseholdCount L/day. (Specify as "X L/day").
-- Maximize washing machine loads (reducing uses by 1-2 loads/week): Saves 80 L/load saved. (Specify as "80 L/load" or "160 L/week").
-- Adopt bucket dishwashing: Saves 70 L/day. (Specify as "70 L/day").
-- Switch garden watering to drip/bucket: Saves GardenWateringMinutesPerDay * 12 L/day. (Specify as "X L/day").
-- Use bucket for car washing: Saves 160 L/wash. (Specify as "160 L/wash").
-- Fix water tank overflow (install float valve/alarm): Saves 100 L/event. (Specify as "100 L/event").
-
-5. Combined Daily Savings (estimated_daily_savings_liters):
-- Calculate the combined daily savings in liters by converting all weekly and event-based savings to their daily equivalents and summing them up:
-  Combined Daily Savings = Sum of all daily tip savings + (Sum of weekly tip savings / 7) + (Sum of event-based tip savings / 7).
-- Ensure this is an integer.
-
-6. Estimated Monthly Bill Savings (estimated_monthly_bill_savings_inr):
-- Calculate monthly water saved (kL) = (Combined Daily Savings * 30) / 1000.
-- If the user provided a monthly water bill (monthlyWaterBillINR):
-  Estimated Monthly Bill Savings = min(monthlyWaterBillINR * 0.7, Math.round(Monthly Water Saved (kL) * 22)).
-- If no monthly water bill was provided:
-  Estimated Monthly Bill Savings = Math.round(Monthly Water Saved (kL) * 22) (using a standard municipal tariff average of Rs. 22 per kL).
-- Ensure this is an integer.
-
-Ensure your entire output strictly conforms to the requested JSON response schema. No markdown formatting, no comments, no surrounding wrappers. Return ONLY a valid JSON string.`;
-
-    const userPrompt = `Here is the user household usage JSON data to analyze:
-${JSON.stringify(userData, null, 2)}`;
+    let parsedJson = null;
+    let apiFailed = false;
 
     try {
       const payload = {
@@ -762,20 +976,16 @@ ${JSON.stringify(userData, null, 2)}`;
           responseSchema: {
             type: "OBJECT",
             properties: {
-              "risk_level": { "type": "STRING", "enum": ["LOW", "MODERATE", "HIGH"] },
-              "risk_score": { "type": "INTEGER" },
               "score_explanation": { "type": "STRING" },
               "tips": {
                 "type": "ARRAY",
                 "items": {
                   "type": "OBJECT",
                   "properties": {
-                    "tip_number": { "type": "INTEGER" },
                     "title": { "type": "STRING" },
-                    "description": { "type": "STRING" },
-                    "liters_saved": { "type": "STRING" }
+                    "description": { "type": "STRING" }
                   },
-                  "required": ["tip_number", "title", "description", "liters_saved"]
+                  "required": ["title", "description"]
                 }
               },
               "weekly_plan": {
@@ -788,11 +998,9 @@ ${JSON.stringify(userData, null, 2)}`;
                   },
                   "required": ["day", "task"]
                 }
-              },
-              "estimated_daily_savings_liters": { "type": "INTEGER" },
-              "estimated_monthly_bill_savings_inr": { "type": "INTEGER" }
+              }
             },
-            "required": ["risk_level", "risk_score", "score_explanation", "tips", "weekly_plan", "estimated_daily_savings_liters", "estimated_monthly_bill_savings_inr"]
+            "required": ["score_explanation", "tips", "weekly_plan"]
           }
         }
       };
@@ -807,29 +1015,53 @@ ${JSON.stringify(userData, null, 2)}`;
 
       const resultData = await response.json();
       const rawText = resultData.candidates[0].content.parts[0].text;
-      const parsedJson = JSON.parse(rawText);
+      parsedJson = JSON.parse(rawText);
 
-      cachedResponseData = parsedJson;
+    } catch (error) {
+      console.error("API Call failed, falling back to static generation:", error);
+      apiFailed = true;
+    }
+
+    try {
+      // Merge pre-calculated numbers with Gemini's narrative (or fallbacks)
+      const sanitized = sanitizeNarrative(parsedJson, consumption.riskLevel, applicableTips);
+
+      const mergedResult = {
+        risk_level: consumption.riskLevel,
+        risk_score: consumption.riskScore,
+        score_explanation: sanitized.score_explanation,
+        tips: sanitized.tips.map((t, idx) => ({
+          tip_number: idx + 1,
+          title: t.title,
+          description: t.description,
+          liters_saved: `${t.liters_saved} ${t.unit}`
+        })),
+        weekly_plan: sanitized.weekly_plan,
+        estimated_daily_savings_liters: savings.dailySavingsLiters,
+        estimated_monthly_bill_savings_inr: savings.monthlySavingsINR
+      };
+
+      cachedResponseData = mergedResult;
       activeTimelineChecklist = Array(7).fill(false);
-      localStorage.setItem("aquasense_last_result", JSON.stringify(parsedJson));
+      localStorage.setItem("aquasense_last_result", JSON.stringify(mergedResult));
       localStorage.setItem("aquasense_checklist", JSON.stringify(activeTimelineChecklist));
 
       await completeLoaderAnimation();
 
       stopLoader();
-      renderDashboard(parsedJson);
+      renderDashboard(mergedResult);
       startButtonCooldown();
-      showToast("Water footprint analyzed successfully!", "success");
 
-    } catch (error) {
-      console.error("API Call Error:", error);
-      stopLoader();
-      
-      let friendlyMessage = error.message;
-      if (friendlyMessage.includes("Max API connection retries") || friendlyMessage.includes("429") || friendlyMessage.includes("503")) {
-        friendlyMessage = "The server is temporarily busy or rate-limited. Please wait a moment and click calculate again to retry.";
+      if (apiFailed) {
+        showToast("Calculated results loaded. AI personalization was offline, showing generic tips.", "warning");
+      } else {
+        showToast("Water footprint analyzed successfully!", "success");
       }
-      showToast(`Analysis Failed: ${friendlyMessage}`, "error");
+
+    } catch (mergeError) {
+      console.error("Error during merge/render:", mergeError);
+      stopLoader();
+      showToast("Failed to process calculations: " + mergeError.message, "error");
     }
   }
 
